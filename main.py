@@ -2,14 +2,13 @@ import datetime
 import os.path
 import threading
 import time as timer
-
 from API.misc import stopThread
 from API.permission import Permissions
 from API.plugin import Plugin, PluginHelpText
 import json
 from API.actions.group.message import sendGroupMessage
 from API.types import GroupMessage, GroupMemberAdd
-from settings import PATH
+from settings import PATH, LOGGER
 
 
 def sendNotice(groupId, content):
@@ -38,7 +37,8 @@ class Essential(Plugin):
             data[f"{groupId}"] = {"notices": {}, "_id": 0}
         data[f"{groupId}"]["_id"] += 1
         _id = data[f"{groupId}"]["_id"]
-        data[f"{groupId}"]["notices"][str(_id)] = {"content": content, "time": time, "sendToNewMember": sendToNewMember, "creator": event.sender.name + f"({event.sender.userId})"}
+        data[f"{groupId}"]["notices"][str(_id)] = {"content": content, "time": time, "sendToNewMember": sendToNewMember,
+                                                   "creator": event.sender.name + f"({event.sender.userId})"}
         json.dump(data, open(os.path.join(PATH, "plugins/essential/notice.json"), "w", encoding="utf8"), indent=4)
         self.notices = data.copy()
         if groupId not in self.threads:
@@ -63,7 +63,7 @@ class Essential(Plugin):
 
     def on_load(self):
         data = json.load(open(os.path.join(PATH, "plugins/essential/notice.json"), "r", encoding="utf8"))
-        self.notices = data.copy()
+        self.notices = data
         for group in self.notices:
             for i in self.notices[group]["notices"]:
                 if int(group) not in self.threads:
@@ -79,7 +79,7 @@ class Essential(Plugin):
     def on_group_member_add(self, event: GroupMemberAdd):
         for notice in self.notices[str(event.groupId)]:
             if notice["sendToNewMember"]:
-                sendNotice(event.groupId, notice["content"])
+                sendNotice(str(event.groupId), notice["content"])
 
     def sendNoticeByTime(self, groupId, i):
         # print(self.notices)
@@ -93,3 +93,44 @@ class Essential(Plugin):
             sendNotice(int(groupId), self.notices[groupId]["notices"][i]["content"])
             while not (datetime.datetime.now().minute != minute and datetime.datetime.now().hour != hour): timer.sleep(
                 5)
+
+    def on_command_getNotice(self, command: dict, event: GroupMessage):
+        if str(event.groupId) not in self.notices:
+            return "null"
+        groupNotices = self.notices[str(event.groupId)]["notices"]
+        text = "\n"
+        for i in groupNotices:
+            text += f"id:{i}\ntime:{groupNotices[i]['time']}\ncreator:{groupNotices[i]['creator']}\ncontent:{groupNotices[i]['content']}\n\n"
+        return text
+
+    def get_permission_getNotice(self):
+        return Permissions.member
+
+    def getNotice_helper(self):
+        text = PluginHelpText("getNotice")
+        text.addExample("", "发送所有的公告信息")
+        return text.generate()
+
+    def on_command_removeNotice(self, command: dict, event: GroupMessage):
+        if "id" not in command:
+            return self.removeNotice_helper()
+        _id = command["id"]
+        groupId = event.groupId
+        if str(event.groupId) not in self.notices:
+            return "这个群没公告"
+        LOGGER.info(self.notices[str(event.groupId)]["notices"])
+        if _id not in self.notices[str(event.groupId)]["notices"]:
+            return "没有这个公告"
+        stopThread(self.threads[groupId][_id])
+        self.notices[str(event.groupId)]["notices"].pop(_id)
+        json.dump(self.notices, open(os.path.join(PATH, "plugins/essential/notice.json"), "w", encoding="utf8"), indent=4)
+        return "删除成功"
+
+    def get_permission_removeNotice(self):
+        return Permissions.admin
+
+    def removeNotice_helper(self):
+        text = PluginHelpText("removeNotice")
+        text.addArg("id", "notice的id值", "id值", ["int"], False)
+        text.addExample("-id:114514", "删除id为114514的notice")
+        return text.generate()
